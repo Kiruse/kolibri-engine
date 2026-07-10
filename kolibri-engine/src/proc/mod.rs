@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, mpsc};
 
 use egui::TextBuffer;
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use notify::{Event as NotifyEvent, EventKind as NotifyEventKind, RecommendedWatcher, Result as NotifyResult, Watcher};
 use wgpu::{Device, RenderPass, util::DeviceExt};
 
@@ -95,7 +95,7 @@ impl HMRFragmentFactory {
 #[macro_export]
 macro_rules! frag {
   ($s:literal) => {
-    kolibri_engine::scenes::proc::FixedFragmentFactory::new(|device| Ok(device.create_shader_module(wgpu::include_wgsl!($s))))
+    kolibri_engine::proc::FixedFragmentFactory::new(|device| Ok(device.create_shader_module(wgpu::include_wgsl!($s))))
   }
 }
 
@@ -103,7 +103,7 @@ macro_rules! frag {
 #[macro_export]
 macro_rules! frag {
   ($s:literal) => {
-    kolibri_engine::scenes::proc::HMRFragmentFactory::new(std::path::Path::new(file!()).parent().unwrap().join($s))
+    kolibri_engine::proc::HMRFragmentFactory::new(std::path::Path::new(file!()).parent().unwrap().join($s))
   }
 }
 
@@ -137,6 +137,23 @@ macro_rules! frag {
 ///   scene_time: f32,
 /// }
 ///
+/// // Camera data
+/// @group(0) @binding(2)
+/// var<uniform> camera: Camera;
+///
+/// struct Camera {
+///   // Field of view (along Y axis)
+///   fov: f32,
+///   // Aspect ratio (width/height)
+///   aspect: f32,
+///   // Camera forward vector (default Z axis unit vector)
+///   forward: vec3f,
+///   // Camera right vector (default X axis unit vector)
+///   right: vec3f,
+///   // Camera up vector (default Y axis unit vector)
+///   up: vec3f,
+/// }
+///
 /// @fragment
 /// fn fx_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 ///   // ...
@@ -153,12 +170,51 @@ pub struct ProceduralSceneState {
   bindgroup: wgpu::BindGroup,
   buf_static: wgpu::Buffer,
   buf_timings: wgpu::Buffer,
+  #[allow(unused)]
+  buf_camera: wgpu::Buffer,
 }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct StaticUniform {
   scene_size: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+  fov: f32,          // size  4
+  aspect: f32,       // size  4, offset 4
+  _pad0: [f32; 2],   // size  8, offset 8
+  forward: [f32; 3], // size 12, offset 16
+  _pad1: f32,        // size  4, offset 28
+  right: [f32; 3],   // size 12, offset 32
+  _pad2: f32,        // size  4, offset 44
+  up: [f32; 3],      // size 12, offset 48
+  _pad3: f32,        // size  4, offset 60
+  // total 64
+}
+
+impl CameraUniform {
+  fn new(fov: f32, aspect: f32, forward: Vec3, right: Vec3, up: Vec3) -> Self {
+    Self {
+      fov,
+      aspect,
+      forward: forward.to_array(),
+      right: right.to_array(),
+      up: up.to_array(),
+      ..Default::default()
+    }
+  }
+
+  fn vfov(hfov: f32, aspect: f32) -> f32 {
+    2. * ((hfov / 2.).tan() / aspect).atan()
+  }
+
+  #[allow(unused)]
+  fn hfov(vfov: f32, aspect: f32) -> f32 {
+    2. * ((vfov / 2.).tan() * aspect).atan()
+  }
 }
 
 impl<F: FragmentFactory> Scene for ProceduralScene<F> {
@@ -179,6 +235,21 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
     let buf_timings = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("ProceduralScene timings uniform buffer"),
       contents: bytemuck::cast_slice(&[timings.as_uniform()]),
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let aspect = 16./9.;
+    let uf_camera = CameraUniform::new(
+      CameraUniform::vfov(90., aspect),
+      aspect,
+      Vec3::new(0., 0., 1.),
+      Vec3::new(1., 0., 0.),
+      Vec3::new(0., 1., 0.),
+    );
+
+    let buf_camera = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label: Some("ProceduralScene camera uniform buffer"),
+      contents: bytemuck::cast_slice(&[uf_camera]),
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
@@ -205,6 +276,16 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
           },
           count: None,
         },
+        wgpu::BindGroupLayoutEntry {
+          binding: 2,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: NonZero::new(64u64),
+          },
+          count: None,
+        },
       ],
     });
 
@@ -218,6 +299,10 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
         wgpu::BindGroupEntry {
           binding: 1,
           resource: buf_timings.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 2,
+          resource: buf_camera.as_entire_binding(),
         },
       ],
       layout: &bgl,
@@ -268,6 +353,7 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
       bindgroup,
       buf_static,
       buf_timings,
+      buf_camera,
     });
 
     Ok(())
@@ -276,6 +362,7 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
   fn update(&mut self, queue: &mut wgpu::Queue, timings: &Timings) -> Result<(), EngineError> {
     let state = self.state()?;
     queue.write_buffer(&state.buf_timings, 0, bytemuck::cast_slice(&[timings.as_uniform()]));
+    // TODO: navigable perspective camera?
     Ok(())
   }
 

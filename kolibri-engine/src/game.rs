@@ -10,8 +10,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::error::EngineError;
-use crate::scenes::Scene;
-use crate::scenes::scene::TimingsUniform;
+use crate::scene::{Scene, TimingsUniform};
 
 pub struct Game {
   ctx: Option<RenderContext>,

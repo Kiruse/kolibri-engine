@@ -23,7 +23,7 @@ pub enum EngineError {
   #[error("State error: {0}")]
   State(String),
   #[error("Input error: {0}")]
-  Input(String)
+  Input(String),
 }
 
 impl EngineError {
