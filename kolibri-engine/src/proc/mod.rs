@@ -238,6 +238,7 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
+    // TODO: this should probably be based on scene size...
     let aspect = 16./9.;
     let uf_camera = CameraUniform::new(
       CameraUniform::vfov(90., aspect),

@@ -30,6 +30,7 @@ const ROTATION_SPEED = 0.25;
 const MAX_MARCH_STEPS = 100;
 const MAX_RAY_DIST = 1000;
 const DISTANCE_THRESHOLD = 0.001;
+const PI = 3.141592653589793;
 
 @fragment
 fn fx_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
@@ -48,7 +49,7 @@ fn raymarch(ray: vec3f) -> f32 {
   var t = 0.;
   for (var i = 0; i < MAX_MARCH_STEPS; i += 1) {
     let p = ray * t;
-    let d = sdf_cube(p, vec3(0., 0., 20.), 4);
+    let d = sdf_cube(p, vec3(0., 0., 10.), 4);
     if d < DISTANCE_THRESHOLD {
       return d;
     }
@@ -65,7 +66,13 @@ fn raymarch(ray: vec3f) -> f32 {
 /// with equilateral side length `s`.
 /// Early dropout when `length(pg - origin) > 1.25s` with simple distance from origin.
 fn sdf_cube(pg: vec3f, origin: vec3f, s: f32) -> f32 {
-  let pl = abs(pg - origin);
+  let theta = -PI * (ROTATION_SPEED * timings.scene_time % 2);
+  let rot = mat3x3(
+    vec3(cos(theta), 0., sin(theta)),
+    vec3(0., 1., 0.),
+    vec3(-sin(theta), 0., cos(theta)),
+  );
+  let pl = abs(rot * (pg - origin));
   let corner = vec3(s / 2);
   let d = pl - corner;
   return length(max(d, vec3(0.))) + min(0, max(d.x, max(d.y, d.z)));
