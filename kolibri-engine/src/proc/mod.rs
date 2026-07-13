@@ -5,12 +5,15 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, mpsc};
 
 use egui::TextBuffer;
+use encase::ShaderType;
 use glam::{Vec2, Vec3};
 use notify::{Event as NotifyEvent, EventKind as NotifyEventKind, RecommendedWatcher, Result as NotifyResult, Watcher};
 use wgpu::{Device, RenderPass, util::DeviceExt};
 
+use crate::camera::PerspectiveCamera;
 use crate::error::EngineError;
 use crate::game::{RenderContext, Timings};
+use crate::util::to_buffer;
 use super::scene::Scene;
 
 pub trait FragmentFactory {
@@ -39,7 +42,6 @@ impl FixedFragmentFactory {
   }
 }
 
-// #[cfg(hmr)]
 pub struct HMRFragmentFactory {
   path: PathBuf,
   // Watcher is stored here so it lives as long as the factory itself
@@ -174,83 +176,57 @@ pub struct ProceduralSceneState {
   buf_camera: wgpu::Buffer,
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(ShaderType)]
 struct StaticUniform {
-  scene_size: [f32; 2],
+  scene_size: Vec2,
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
+/// This scene's shader uses a different perspective camera uniform, though it could probably easily be rewritten
+/// to use a default [crate::camera::PerspectiveCamera].
+#[derive(ShaderType)]
 struct CameraUniform {
-  fov: f32,          // size  4
-  aspect: f32,       // size  4, offset 4
-  _pad0: [f32; 2],   // size  8, offset 8
-  forward: [f32; 3], // size 12, offset 16
-  _pad1: f32,        // size  4, offset 28
-  right: [f32; 3],   // size 12, offset 32
-  _pad2: f32,        // size  4, offset 44
-  up: [f32; 3],      // size 12, offset 48
-  _pad3: f32,        // size  4, offset 60
-  // total 64
-}
-
-impl CameraUniform {
-  fn new(fov: f32, aspect: f32, forward: Vec3, right: Vec3, up: Vec3) -> Self {
-    Self {
-      fov,
-      aspect,
-      forward: forward.to_array(),
-      right: right.to_array(),
-      up: up.to_array(),
-      ..Default::default()
-    }
-  }
-
-  fn vfov(hfov: f32, aspect: f32) -> f32 {
-    2. * ((hfov / 2.).tan() / aspect).atan()
-  }
-
-  #[allow(unused)]
-  fn hfov(vfov: f32, aspect: f32) -> f32 {
-    2. * ((vfov / 2.).tan() * aspect).atan()
-  }
+  fov: f32,
+  aspect: f32,
+  forward: Vec3,
+  right: Vec3,
+  up: Vec3,
 }
 
 impl<F: FragmentFactory> Scene for ProceduralScene<F> {
-  fn init(&mut self, ctx: &RenderContext, timings: &Timings) -> Result<(), EngineError> {
+  fn init(&mut self, ctx: &RenderContext, timings: &Timings, scene_size: Vec2) -> Result<(), EngineError> {
+    self.scene_size = scene_size;
+
     let vx_shader = ctx.device.create_shader_module(wgpu::include_wgsl!("proc.wgsl"));
     let fx_shader = self.fragment_factory.load(&ctx.device)?;
 
     let uf_static = StaticUniform {
-      scene_size: self.scene_size.to_array(),
+      scene_size,
     };
 
     let buf_static = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("ProceduralScene static uniform buffer"),
-      contents: bytemuck::cast_slice(&[uf_static]),
+      contents: &to_buffer(&uf_static),
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
     let buf_timings = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("ProceduralScene timings uniform buffer"),
-      contents: bytemuck::cast_slice(&[timings.as_uniform()]),
+      contents: &to_buffer(&timings.as_uniform()),
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
-    // TODO: this should probably be based on scene size...
-    let aspect = 16./9.;
-    let uf_camera = CameraUniform::new(
-      CameraUniform::vfov(90., aspect),
+    let aspect = scene_size.x / scene_size.y;
+    let uf_camera = CameraUniform {
+      fov: PerspectiveCamera::vfov(90., aspect),
       aspect,
-      Vec3::new(0., 0., 1.),
-      Vec3::new(1., 0., 0.),
-      Vec3::new(0., 1., 0.),
-    );
+      right: Vec3::new(1., 0., 0.),
+      up: Vec3::new(0., 1., 0.),
+      forward: Vec3::new(0., 0., 1.),
+    };
 
     let buf_camera = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label: Some("ProceduralScene camera uniform buffer"),
-      contents: bytemuck::cast_slice(&[uf_camera]),
+      contents: &to_buffer(&uf_camera),
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
@@ -362,7 +338,7 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
 
   fn update(&mut self, queue: &mut wgpu::Queue, timings: &Timings) -> Result<(), EngineError> {
     let state = self.state()?;
-    queue.write_buffer(&state.buf_timings, 0, bytemuck::cast_slice(&[timings.as_uniform()]));
+    queue.write_buffer(&state.buf_timings, 0, &to_buffer(&timings.as_uniform()));
     // TODO: navigable perspective camera?
     Ok(())
   }
@@ -376,9 +352,9 @@ impl<F: FragmentFactory> Scene for ProceduralScene<F> {
 
     let state = self.state()?;
     let uf = StaticUniform {
-      scene_size: new_size.to_array(),
+      scene_size: new_size,
     };
-    queue.write_buffer(&state.buf_static, 0, bytemuck::cast_slice(&[uf]));
+    queue.write_buffer(&state.buf_static, 0, &to_buffer(&uf));
     Ok(())
   }
 

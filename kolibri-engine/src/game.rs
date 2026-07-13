@@ -78,8 +78,7 @@ impl Game {
     if let Some(looper) = self.looper.as_mut() {
       if let Some(mut next_scene) = looper()? {
         self.timings.reset_scene();
-        next_scene.init(ctx, &self.timings)?;
-        next_scene.resize(&mut ctx.queue, Vec2::new(ctx.size.width as f32, ctx.size.height as f32))?;
+        next_scene.init(ctx, &self.timings, Vec2::new(ctx.size.width as f32, ctx.size.height as f32))?;
         self.scene = Some(next_scene);
       }
     }

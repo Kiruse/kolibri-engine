@@ -1,3 +1,4 @@
+use encase::ShaderType;
 use glam::Vec2;
 use wgpu::RenderPass;
 
@@ -15,7 +16,7 @@ use crate::game::{RenderContext, Timings};
 ///   procedural art components.
 pub trait Scene {
   /// Initialize the scene, creating render pipeline & such.
-  fn init(&mut self, ctx: &RenderContext, timings: &Timings) -> Result<(), EngineError>;
+  fn init(&mut self, ctx: &RenderContext, timings: &Timings, scene_size: Vec2) -> Result<(), EngineError>;
 
   /// Optional update pass e.g. for updating buffers.
   fn update(
@@ -38,8 +39,7 @@ pub trait Scene {
   fn render(&mut self, pass: &mut RenderPass) -> Result<(), EngineError>;
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(ShaderType)]
 pub struct TimingsUniform {
   pub delta_time: f32,
   pub world_time: f32,

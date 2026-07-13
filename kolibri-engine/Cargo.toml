@@ -5,9 +5,9 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
-bytemuck = "1.25.0"
 egui = "0.34.3"
-glam = "0.33.0"
+encase = "0.12.0"
+glam = { version = "0.33.0", features = ["encase"] }
 log = "0.4.32"
 notify = "8.2.0"
 pollster = "0.4.0"

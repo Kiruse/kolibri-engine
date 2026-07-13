@@ -1,5 +1,10 @@
-pub use crate::frag;
-pub use crate::game::{Game, Timings};
-pub use crate::octree::ChunkCoord;
-pub use crate::proc::{FixedFragmentFactory, HMRFragmentFactory, ProceduralScene};
-pub use crate::scene::Scene;
+pub use crate::{
+  camera::PerspectiveCamera,
+  frag,
+  game::{Game, Timings},
+  octree::ChunkCoord,
+  proc::{FixedFragmentFactory, HMRFragmentFactory, ProceduralScene},
+  scene::Scene,
+  transform::Transform,
+  voxel::VoxelScene,
+};
